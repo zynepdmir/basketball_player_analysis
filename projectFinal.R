@@ -77,10 +77,6 @@ useless_vars_players2 <- c("Years", "playingPosition" ,"participated", "sStealsP
                            "firstName" ,"TVName", "scoreboardName","nickName","website" , "internationalReference" )
 
 players_data <- select(players_data, -all_of(useless_vars_players2))
-#dim(players_data)
-
-
-
 
 #### DATA CLEANING FOR ACTIONS DATA ####
 actions_data <- read.csv("C:/Users/zynep/OneDrive/Desktop/stat493/actions_3_seasons.csv",
@@ -137,83 +133,6 @@ actions_data <- actions_data %>%
 actions_data <- actions_data[actions_data$periodType == "REGULAR",]
 
 
-########### ACTIONS DATA ###########
-# oyuncusu NA olan aksiyonların olmadığı bir dataframe tanımla
-actions_data_clean <- actions_data[is.na(actions_data$personName) == 0,]
-# 259 maç var, 282 oyuncu var.
-
-# ELMEDIN KIKANOVIC hangi maçta kaç tane başarılı turnover_doubledribble yapmış:
-library(dplyr)
-library(tidyr)
-library(stringr)
-
-players <- unique(actions_data_clean$personName)
-match_ids <- unique(actions_data_clean$matchId)
-
-# action_sub oluştur
-actions_data_clean <- actions_data_clean %>%
-  mutate(
-    subType = ifelse(is.na(subType), "NA", subType),
-    action_sub = paste0(actionType, "_", subType)
-  )
-
-# Tüm olası action_sub’lar
-all_action_subs <- actions_data_clean %>%
-  filter(success == 1) %>%
-  pull(action_sub) %>%
-  unique()
-
-# Tüm olası qualifiers'ları çıkar
-all_qualifiers <- actions_data_clean %>%
-  filter(success == 1, !is.na(qualifiers)) %>%
-  pull(qualifiers) %>%
-  str_split(";") %>%
-  unlist() %>%
-  unique()
-
-player_list <- list()
-
-for (player in players) {
-  # 1. Başarılı action_sub sayımı
-  action_df <- actions_data_clean %>%
-    filter(personName == player, success == 1) %>%
-    group_by(matchId, action_sub) %>%
-    summarise(count = n(), .groups = "drop") %>%
-    pivot_wider(names_from = action_sub, values_from = count)
-  
-  for (col in all_action_subs) {
-    if (!(col %in% colnames(action_df))) {
-      action_df[[col]] <- 0
-    }
-  }
-  
-  # 2. Başarılı qualifiers sayımı
-  qual_df <- actions_data_clean %>%
-    filter(personName == player, success == 1, !is.na(qualifiers)) %>%
-    separate_rows(qualifiers, sep = ";") %>%
-    group_by(matchId, qualifiers) %>%
-    summarise(count = n(), .groups = "drop") %>%
-    pivot_wider(names_from = qualifiers, values_from = count)
-  
-  for (col in all_qualifiers) {
-    if (!(col %in% colnames(qual_df))) {
-      qual_df[[col]] <- 0
-    }
-  }
-  
-  # 3. Tüm maçlar için boş iskelet
-  all_matches <- data.frame(matchId = match_ids)
-  
-  # 4. Join ve NA'ları 0 ile doldur
-  full_df <- all_matches %>%
-    left_join(action_df, by = "matchId") %>%
-    left_join(qual_df, by = "matchId") %>%
-    mutate(across(-matchId, ~replace_na(., 0)))
-  
-  player_list[[player]] <- full_df
-}
-
-
 #### PLAYERS DATA ####
 
 vars_to_zero_na <- names(players_data)
@@ -260,8 +179,6 @@ players_weighted_per <- players_weighted_per %>%
     PER_class = ifelse(weighted_PER >= median(weighted_PER, na.rm = TRUE), "High", "Low")
   )
 
-
-# Oyuncu bazında ortalama (veya toplam) istatistikler alınmalı
 # df of indep vars
 player_level_data <- players_data %>% # df of indep vars and the outcome
   group_by(personName) %>%
@@ -322,35 +239,32 @@ lines(density(player_level_data$missedFG),
 
 #### Decision tree ####
 
-# Gerekli kütüphaneler
 library(rpart)
 library(rpart.plot)
 library(caret)
 
-# 1. Veri setini ayır
-set.seed(493)  # Tekrarlanabilirlik için
+set.seed(493)  
 train_index <- createDataPartition(player_level_data$PER_class, p = 0.7, list = FALSE)
 
 train_data <- player_level_data[train_index, ]
 test_data <- player_level_data[-train_index, ]
 
-# 2. Decision tree modelini kur (train setiyle)
+# decision tree model 
 dt_model <- rpart(PER_class ~ ., 
                   data = train_data %>% select(-personName, -weighted_PER),
                   method = "class")
-
-# 3. Test setiyle tahmin yap
+# predictions
 preds <- predict(dt_model, newdata = test_data, type = "class")
 
-# 4. Accuracy hesapla
+# accuracy 
 conf_mat <- confusionMatrix(preds, as.factor(test_data$PER_class))
 accuracy <- conf_mat$overall['Accuracy']
 print(accuracy)
 
-# 5. Decision tree grafiği
+# 5. Decision tree plot
 rpart.plot(dt_model,
-           type = 3,              # yes/no ayrımlı kutular
-           extra = 101,           # sınıf, olasılık ve yığın bilgisi
+           type = 3,              
+           extra = 101,           
            box.palette = "RdYlGn",
            fallen.leaves = TRUE,
            main = "Decision Tree for PER_class")
@@ -358,20 +272,19 @@ rpart.plot(dt_model,
 # feature importance
 dt_model$variable.importance
 
-# feature importance plot
 library(ggplot2)
 
-# Feature importance'ı dataframe'e çevir
+# convert to dataframe
 importance_df <- data.frame(
   Feature = names(dt_model$variable.importance),
   Importance = dt_model$variable.importance
 )
 
-# Feature'ları önem sırasına göre sırala
+# sort the features 
 importance_df <- importance_df %>%
   arrange(desc(Importance))
 
-# Plot
+# plot
 ggplot(importance_df, aes(x = reorder(Feature, Importance), y = Importance)) +
   geom_col(fill = "steelblue") +
   coord_flip() +
